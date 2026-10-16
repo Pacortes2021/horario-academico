@@ -122,7 +122,14 @@
         .fecha-item { background: var(--bg-color); margin-bottom: 10px; padding: 15px; border-left: 5px solid; border-radius: 6px; display: flex; flex-direction: column; gap: 5px;}
         .fecha-nombre { font-weight: 600; color: var(--text-main); font-size: 1.05em;}
         .fecha-dia { color: var(--text-muted); font-weight: 500; font-size: 0.9em; }
-        .sin-eventos { text-align: center; color: var(--text-muted); padding: 20px; font-style: italic; font-size: 0.95em;}
+        .btn-chip {
+            background: #eef2f5; border: 1px solid #d0d7de; color: var(--text-muted);
+            font-size: 8.5pt; font-weight: 600; padding: 4px 10px; border-radius: 6px;
+            cursor: pointer; transition: all 0.15s ease;
+        }
+        .btn-chip:hover { background: #e1e8ed; color: var(--primary-color); }
+        .btn-chip.activo { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+        .backup-textarea { width: 100%; height: 110px; font-family: monospace; font-size: 9pt; padding: 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; resize: vertical; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -252,9 +259,16 @@
                 </div>
                 <div id="cal-dias" class="cal-grid" style="border-bottom: 1px solid #eee; padding-bottom: 15px;"></div>
 
-                <div class="header" style="margin-top: 20px; margin-bottom: 0; padding-bottom: 10px; border-bottom: none;">
-                    <h3 style="margin:0; font-size: 11pt; color: var(--text-muted); text-transform: uppercase;">Próximas Evaluaciones</h3>
-                    <button style="background:none; border:none; color:var(--primary-color); cursor:pointer; font-weight:600; font-size:9pt;" onclick="renderizarAgenda()">Ver Todo</button>
+                <div class="header" style="margin-top: 20px; margin-bottom: 0; padding-bottom: 10px; border-bottom: none; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <h3 id="titulo-agenda-seccion" style="margin:0; font-size: 11pt; color: var(--text-muted); text-transform: uppercase;">Evaluaciones</h3>
+                        <span id="filtro-activo-badge" style="display:none; font-size: 8pt; color: var(--primary-color); cursor: pointer;" onclick="quitarFiltroRamo()"></span>
+                    </div>
+                    <div style="display: flex; gap: 5px; align-items: center;">
+                        <button id="btn-filtro-proximas" class="btn-chip activo" onclick="cambiarModoAgenda('proximas')">Próximas</button>
+                        <button id="btn-filtro-todas" class="btn-chip" onclick="cambiarModoAgenda('todas')">Todas</button>
+                        <button class="btn-chip" onclick="abrirModalBackup()" title="Sincronizar o transferir datos"><i class="fa-solid fa-arrows-rotate"></i> Sync</button>
+                    </div>
                 </div>
                 <div id="lista-agenda" class="lista-agenda-container">
                     </div>
@@ -295,6 +309,29 @@
         </div>
     </div>
 
+    <div id="modalBackup" class="modal-overlay" onclick="cerrarSiClickFuera(event, 'modalBackup')">
+        <div class="modal-box">
+            <button class="close-btn" onclick="cerrarModal('modalBackup')">×</button>
+            <h2 class="modal-titulo"><i class="fa-solid fa-arrows-rotate"></i> Sincronizar Evaluaciones</h2>
+            <p style="font-size: 9.5pt; color: var(--text-muted); margin-top: 0; line-height: 1.4;">
+                Usa esto para transferir tus evaluaciones entre <strong>localhost</strong> y tu web en <strong>GitHub / Vercel</strong>, o respaldarlas.
+            </p>
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 600; font-size: 9pt; color: var(--text-muted); display: block; margin-bottom: 5px;">DATOS EN FORMATO JSON</label>
+                <textarea id="backupData" class="backup-textarea" placeholder="Pega aquí los datos para importar o cópialos de abajo..."></textarea>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button type="button" class="btn-submit" style="background:#2e7d32; flex:1;" onclick="copiarBackup()">
+                    <i class="fa-regular fa-copy"></i> Copiar Datos
+                </button>
+                <button type="button" class="btn-submit" style="flex:1;" onclick="importarBackup()">
+                    <i class="fa-solid fa-file-import"></i> Guardar Datos
+                </button>
+            </div>
+            <div id="backupMensaje" style="font-size: 9pt; margin-top: 10px; text-align: center; font-weight: 600;"></div>
+        </div>
+    </div>
+
     <script>
         const baseDatosRamos = {
             'logistica': { titulo: 'Logística', color: '#1565c0' },
@@ -305,10 +342,27 @@
             'genai': { titulo: 'Generative Artificial Intelligence', color: '#00838f' }
         };
 
+        const ramosRetrocompatibles = {
+            'evaluacion': { titulo: 'Evaluación de Proyectos', color: '#d32f2f' },
+            'gestion': { titulo: 'Gestión de Personas', color: '#f39c12' },
+            'diseno': { titulo: 'Diseño de Sist. de Producción', color: '#2e7d32' },
+            'ml': { titulo: 'Machine Learning', color: '#1565c0' },
+            'sustentabilidad': { titulo: 'Intro. a la Sustentabilidad', color: '#795548' },
+            'data': { titulo: 'Data Visualization', color: '#8e24aa' }
+        };
+
+        function obtenerInfoRamo(idRamo) {
+            if (baseDatosRamos[idRamo]) return baseDatosRamos[idRamo];
+            if (ramosRetrocompatibles[idRamo]) return ramosRetrocompatibles[idRamo];
+            return { titulo: idRamo || 'Asignatura', color: '#546e7a' };
+        }
+
         const mesesMap = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
         
         let registrosGuardados = JSON.parse(localStorage.getItem('evaluacionesUdeC')) || [];
         let mapaEventosCalendario = {}; 
+        let modoAgenda = 'proximas';
+        let filtroRamoActivo = null;
 
         const selectRamo = document.getElementById('evalRamo');
         for (const [idRamo, info] of Object.entries(baseDatosRamos)) {
@@ -330,7 +384,7 @@
                 let claveStr = `${anio}-${mes}-${dia}`;
 
                 if(!mapaEventosCalendario[claveStr]) mapaEventosCalendario[claveStr] = [];
-                mapaEventosCalendario[claveStr].push(baseDatosRamos[item.idRamo].color);
+                mapaEventosCalendario[claveStr].push(obtenerInfoRamo(item.idRamo).color);
             });
         }
 
@@ -372,40 +426,66 @@
             }
         }
 
+        function cambiarModoAgenda(modo) {
+            modoAgenda = modo;
+            document.getElementById('btn-filtro-proximas').classList.toggle('activo', modo === 'proximas');
+            document.getElementById('btn-filtro-todas').classList.toggle('activo', modo === 'todas');
+            renderizarAgenda();
+        }
+
+        function quitarFiltroRamo() {
+            filtroRamoActivo = null;
+            document.getElementById('filtro-activo-badge').style.display = 'none';
+            renderizarAgenda();
+        }
+
         function renderizarAgenda(filtroRamo = null) {
+            if (filtroRamo !== null) {
+                filtroRamoActivo = filtroRamo;
+            }
+
             const contenedor = document.getElementById('lista-agenda');
             contenedor.innerHTML = '';
 
+            const badge = document.getElementById('filtro-activo-badge');
+            if (filtroRamoActivo) {
+                badge.style.display = 'inline-block';
+                badge.innerHTML = `<i class="fa-solid fa-filter"></i> ${obtenerInfoRamo(filtroRamoActivo).titulo} <span style="text-decoration:underline;">(Quitar filtro)</span>`;
+            } else {
+                badge.style.display = 'none';
+            }
+
             let listaMostrar = registrosGuardados;
             
-            if(filtroRamo) {
-                listaMostrar = registrosGuardados.filter(reg => reg.idRamo === filtroRamo);
-                if(listaMostrar.length === 0) {
-                    contenedor.innerHTML = `<div class="sin-eventos">No hay evaluaciones registradas para ${baseDatosRamos[filtroRamo].titulo}.</div>`;
-                    return;
-                }
-            } else {
+            if(filtroRamoActivo) {
+                listaMostrar = listaMostrar.filter(reg => reg.idRamo === filtroRamoActivo);
+            }
+
+            if(modoAgenda === 'proximas') {
                 let hoy = new Date();
                 hoy.setHours(0,0,0,0);
-                listaMostrar = registrosGuardados.filter(reg => new Date(reg.fechaISO + 'T12:00:00') >= hoy);
+                listaMostrar = listaMostrar.filter(reg => new Date(reg.fechaISO + 'T12:00:00') >= hoy);
             }
 
             if(listaMostrar.length === 0) {
-                contenedor.innerHTML = '<div class="sin-eventos">No hay evaluaciones próximas.<br>Usa el botón "Nueva Evaluación" para comenzar.</div>';
+                let msj = modoAgenda === 'proximas' 
+                    ? 'No hay evaluaciones próximas.<br><a href="#" onclick="cambiarModoAgenda(\'todas\'); return false;" style="color:var(--primary-color); font-weight:600;">Ver historial completo</a> o usa "Nueva Evaluación".'
+                    : 'No hay evaluaciones registradas en el sistema.<br>Usa el botón "Nueva Evaluación" para comenzar.';
+                contenedor.innerHTML = `<div class="sin-eventos">${msj}</div>`;
                 return;
             }
 
             listaMostrar.forEach(item => {
                 let dateObj = new Date(item.fechaISO + 'T12:00:00');
                 let fechaFormateada = `${dateObj.getDate()} ${mesesMap[dateObj.getMonth()]} ${dateObj.getFullYear()}`;
-                let colorRamo = baseDatosRamos[item.idRamo].color;
+                let infoRamo = obtenerInfoRamo(item.idRamo);
 
                 contenedor.innerHTML += `
-                    <div class="agenda-item" style="border-left-color: ${colorRamo};">
+                    <div class="agenda-item" style="border-left-color: ${infoRamo.color};">
                         <div class="agenda-item-info">
-                            <div class="agenda-fecha"><i class="fa-regular fa-calendar-check" style="color:${colorRamo}"></i> ${fechaFormateada}</div>
+                            <div class="agenda-fecha"><i class="fa-regular fa-calendar-check" style="color:${infoRamo.color}"></i> ${fechaFormateada}</div>
                             <div class="agenda-titulo">${item.nombre}</div>
-                            <div class="agenda-ramo">${baseDatosRamos[item.idRamo].titulo}</div>
+                            <div class="agenda-ramo">${infoRamo.titulo}</div>
                         </div>
                         <button class="btn-eliminar" onclick="eliminarEvaluacion('${item.id}')" title="Eliminar">
                             <i class="fa-solid fa-trash-can"></i>
@@ -415,6 +495,7 @@
         }
 
         function filtrarAgenda(idRamo) {
+            cambiarModoAgenda('todas');
             renderizarAgenda(idRamo);
         }
 
@@ -480,16 +561,68 @@
                 return evDate.getFullYear() == partes[0] && evDate.getMonth() == partes[1] && evDate.getDate() == partes[2];
             });
             
-            eventosDelDia.forEach(f => {
-                let colorInfo = baseDatosRamos[f.idRamo].color;
-                c.innerHTML += `
-                <div class="fecha-item" style="border-left-color: ${colorInfo};">
-                    <span class="fecha-nombre">${f.nombre}</span>
-                    <span class="fecha-dia">${baseDatosRamos[f.idRamo].titulo}</span>
-                </div>`;
-            });
+            if (eventosDelDia.length === 0) {
+                c.innerHTML = `<div class="sin-eventos">No hay evaluaciones programadas para este día.</div>`;
+            } else {
+                eventosDelDia.forEach(f => {
+                    let info = obtenerInfoRamo(f.idRamo);
+                    c.innerHTML += `
+                    <div class="fecha-item" style="border-left-color: ${info.color};">
+                        <span class="fecha-nombre">${f.nombre}</span>
+                        <span class="fecha-dia">${info.titulo}</span>
+                    </div>`;
+                });
+            }
             
             document.getElementById('modalDetalles').style.display = 'flex';
+        }
+
+        // --- SISTEMA DE SINCRONIZACIÓN Y BACKUP ---
+        function abrirModalBackup() {
+            const textarea = document.getElementById('backupData');
+            textarea.value = JSON.stringify(registrosGuardados, null, 2);
+            document.getElementById('backupMensaje').innerText = '';
+            document.getElementById('modalBackup').style.display = 'flex';
+        }
+
+        function copiarBackup() {
+            const textarea = document.getElementById('backupData');
+            textarea.select();
+            navigator.clipboard.writeText(textarea.value).then(() => {
+                document.getElementById('backupMensaje').style.color = '#2e7d32';
+                document.getElementById('backupMensaje').innerText = '✓ ¡Copiado al portapapeles! Ahora pégalo en tu web.';
+            }).catch(() => {
+                document.execCommand('copy');
+                document.getElementById('backupMensaje').style.color = '#2e7d32';
+                document.getElementById('backupMensaje').innerText = '✓ Datos seleccionados y copiados.';
+            });
+        }
+
+        function importarBackup() {
+            const texto = document.getElementById('backupData').value.trim();
+            const msg = document.getElementById('backupMensaje');
+            if (!texto) {
+                msg.style.color = '#d32f2f';
+                msg.innerText = 'El campo está vacío. Pega tus datos JSON primero.';
+                return;
+            }
+            try {
+                const parseados = JSON.parse(texto);
+                if (!Array.isArray(parseados)) {
+                    throw new Error('El formato debe ser una lista de evaluaciones.');
+                }
+                registrosGuardados = parseados;
+                localStorage.setItem('evaluacionesUdeC', JSON.stringify(registrosGuardados));
+                procesarDatos();
+                renderizarCalendario();
+                renderizarAgenda();
+                msg.style.color = '#2e7d32';
+                msg.innerText = `✓ ¡Éxito! Se cargaron ${registrosGuardados.length} evaluaciones.`;
+                setTimeout(() => { cerrarModal('modalBackup'); }, 1200);
+            } catch (err) {
+                msg.style.color = '#d32f2f';
+                msg.innerText = 'Error al leer datos JSON: ' + err.message;
+            }
         }
 
         function cerrarModal(id) { document.getElementById(id).style.display = 'none'; }
